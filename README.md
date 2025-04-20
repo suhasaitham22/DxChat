@@ -5,7 +5,7 @@
 
 A Streamlit web application demonstrating an AI chatbot designed to provide **general information** about health symptoms. This tool uses open-source Large Language Models (LLMs) accessed via the Hugging Face Inference API.
 
-**➡️ Live Demo :** [[Link to your Streamlit Cloud App](https://dxchat-paakwi7x3w7tf36v7h26xq.streamlit.app/)]
+**➡️ Live Demo :** [[Link to the Streamlit Cloud App](https://dxchat-paakwi7x3w7tf36v7h26xq.streamlit.app/)]
 
 ---
 
