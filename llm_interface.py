@@ -3,7 +3,7 @@ import logging
 from typing import List, Dict, Iterator, Any
 from huggingface_hub import InferenceClient, HfApi
 from huggingface_hub.hf_api import HfApi, ModelInfo
-from huggingface_hub.inference._text_generation import TextGenerationStreamResponse, Token
+# from huggingface_hub.inference._text_generation import TextGenerationStreamResponse, Token
 import requests
 import time
 
@@ -154,20 +154,15 @@ def get_hf_llm_response_stream(
         )
 
         # Stream the response chunks
-        generated_text = ""
-        for response in stream:
-            # Check the type of response object (depends on version/details flag)
-            if isinstance(response, TextGenerationStreamResponse):
-                 # If details=True, response might be structured differently
-                 # For details=False, access token text directly
-                 if response.token and not response.token.special: # Ignore special tokens
-                     chunk = response.token.text
+            generated_text = ""
+            for chunk in stream:
+                 # Directly process the yielded string chunk
+                 if isinstance(chunk, str):
                      generated_text += chunk
                      yield chunk
-            elif isinstance(response, str): # Older versions might yield strings directly
-                 generated_text += response
-                 yield response
-            # Handle potential errors or end-of-stream markers if the API provides them
+                 else:
+                     # Log if something unexpected is received, but don't crash
+                     logger.warning(f"Received unexpected chunk type in stream (expected str with details=False): {type(chunk)}")
 
         logger.info(f"Finished streaming from {model_id}. Total length: {len(generated_text)}")
 
