@@ -42,7 +42,7 @@ A Streamlit web application demonstrating an AI chatbot designed to provide **ge
 
 1.  **Clone the Repository:**
     ```bash
-    git clone [Link to your repository]
+    git clone [(https://github.com/suhasaitham22/DxChat/tree/main)]
     cd [repository-folder-name]
     ```
 
