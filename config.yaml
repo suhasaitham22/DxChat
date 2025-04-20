@@ -1,16 +1,21 @@
-# Configuration for the AI Symptom Helper Application
+# Configuration for the AI Symptom Helper Application (Cloud Version)
 
 llm:
-  # Default model to use. Ensure this model is pulled via 'ollama pull <model_name>'
-  default_model: "mistral"
-  # Backup model if the default fails or isn't found initially
-  fallback_model: "phi3"
-  # Parameters for the LLM call (optional, Ollama defaults are often reasonable)
-  # temperature: 0.7
-  # top_p: 1.0
+  # Default model to use from Hugging Face Inference API (Serverless)
+  # Choose models known for free tier availability & suitability for chat/instruction
+  # Examples: Mistral-7B-Instruct, Zephyr-7B-beta, Llama-2-7b-chat-hf (check HF for current free tier models)
+  default_model: "mistralai/Mistral-7B-Instruct-v0.1"
+  fallback_model: "HuggingFaceH4/zephyr-7b-beta" # Example fallback
+
+  # Parameters for the Hugging Face Inference API call
+  temperature: 0.6
+  max_new_tokens: 512 # Control output length
+  top_p: 0.9
+  repetition_penalty: 1.1 # Slightly discourage repetition
+  # 'options' sub-key might not be directly used by HF client, params passed directly
 
 prompts:
-  # CRITICAL: This system prompt guides the LLM's behavior. Be very specific.
+  # --- CRITICAL: Keep your strong system prompt ---
   system_prompt: |
     You are an AI assistant designed ONLY to provide general information related to health symptoms described by the user.
     You are strictly FOR INFORMATIONAL PURPOSES and CANNOT provide medical advice or diagnosis.
@@ -31,7 +36,7 @@ prompts:
     How can I help you describe your symptoms today?
 
   error_message: |
-    I apologize, but I encountered an error trying to process your request. Please try again later.
+    I apologize, but I encountered an error trying to process your request. This might be due to limitations with the free service tier. Please try again later.
     **Remember: This tool is for informational purposes only. Please consult a qualified healthcare provider for any medical advice or diagnosis.**
 
   disclaimer_short: "**Disclaimer:** Not medical advice. Consult a doctor."
@@ -43,12 +48,12 @@ prompts:
 
 
 app:
-  title: "AI Symptom Helper (Informational Tool)"
+  title: "AI Symptom Helper (Informational Tool - Cloud Demo)" # Adjusted title slightly
   page_icon: "🧑‍⚕️"
   menu_items:
     Get Help: 'mailto:support@example.com' # Replace with your contact
     Report a bug: "mailto:bugs@example.com" # Replace with your contact
-    About: "# AI Symptom Helper\nThis is an informational tool using AI. **It is NOT a medical device.** Always consult a doctor."
+    About: "# AI Symptom Helper\nThis is an informational tool using AI. **It is NOT a medical device.** Always consult a doctor.\nPowered by Hugging Face Inference API." # Add attribution
 
 logging:
   level: "INFO" # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
