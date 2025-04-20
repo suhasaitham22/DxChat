@@ -1,118 +1,198 @@
 import streamlit as st
-import ollama # Use the Ollama client library
+import logging
 import time
+from pathlib import Path
 
-# --- Page Configuration ---
+# --- Project Structure Setup ---
+# Ensure local modules can be imported
+import sys
+sys.path.append(str(Path(__file__).parent))
+
+# --- Local Imports ---
+import utils
+import llm_interface as llm
+
+# --- Configuration & Logging ---
+# Load configuration early
+CONFIG = utils.load_config()
+# Set up logging based on config
+logger = utils.setup_logging(CONFIG)
+
+# --- Constants from Config ---
+APP_CONFIG = CONFIG.get('app', {})
+LLM_CONFIG = CONFIG.get('llm', {})
+PROMPTS_CONFIG = CONFIG.get('prompts', {})
+
+PAGE_TITLE = APP_CONFIG.get('title', "AI Symptom Helper")
+PAGE_ICON = APP_CONFIG.get('page_icon', "🧑‍⚕️")
+MENU_ITEMS = APP_CONFIG.get('menu_items', {})
+
+DEFAULT_MODEL = LLM_CONFIG.get('default_model', 'mistral')
+FALLBACK_MODEL = LLM_CONFIG.get('fallback_model', None)
+LLM_OPTIONS = {k: v for k, v in LLM_CONFIG.items() if k not in ['default_model', 'fallback_model']} # Extract options like temp, top_p
+
+SYSTEM_PROMPT = PROMPTS_CONFIG.get('system_prompt', "You are a helpful AI assistant.")
+INITIAL_MSG = PROMPTS_CONFIG.get('initial_assistant_message', "How can I help?")
+ERROR_MSG = PROMPTS_CONFIG.get('error_message', "Sorry, an error occurred.")
+DISCLAIMER_SHORT = PROMPTS_CONFIG.get('disclaimer_short', "Not medical advice.")
+DISCLAIMER_LONG = PROMPTS_CONFIG.get('disclaimer_long', "This is not medical advice. Consult a doctor.")
+
+# --- Streamlit Page Setup ---
 st.set_page_config(
-    page_title="AI Symptom Helper (Informational Only)",
-    page_icon="🧑‍⚕️",
-    layout="wide"
+    page_title=PAGE_TITLE,
+    page_icon=PAGE_ICON,
+    layout="wide",
+    menu_items=MENU_ITEMS
 )
 
-# --- Critical Disclaimer ---
-st.title("AI Symptom Helper 🧑‍⚕️")
-st.warning(
-    """
-    ⚠️ **Disclaimer:** I am an AI assistant, not a medical professional.
-    This tool is for **informational purposes only** and **cannot provide a diagnosis**.
-    The information provided may not be accurate or complete.
-    **Always consult a qualified healthcare provider** for any health concerns or before making any decisions related to your health or treatment.
-    Do not disregard professional medical advice or delay seeking it because of something you have read or received from this tool.
-    **If you think you may have a medical emergency, call your doctor or emergency services immediately.**
-    """
-)
-st.divider()
-
-# --- Model Selection (Optional but good for demo) ---
-# You could list models Ollama has downloaded or offer choices
-# For simplicity, we'll hardcode one for now.
-LLM_MODEL = "mistral" # Or "llama3", "phi3" - make sure it's pulled via `ollama pull <model_name>`
-
-# --- System Prompt (Crucial for Safety & Role Setting) ---
-SYSTEM_PROMPT = """
-You are an AI assistant designed to provide general information related to health symptoms based on user descriptions.
-You are NOT a doctor or a diagnostic tool.
-Your primary goal is to help users articulate their symptoms and provide *potential* related areas or conditions for them to discuss with a healthcare professional.
-
-RULES:
-1.  **NEVER provide a diagnosis.** Do not say "you might have X" or "it sounds like Y".
-2.  **ALWAYS preface information** by stating it is general information and not medical advice.
-3.  **ALWAYS strongly recommend** the user consult a qualified healthcare professional for accurate diagnosis and treatment.
-4.  **If the user describes severe symptoms** (e.g., chest pain, difficulty breathing, severe bleeding, loss of consciousness), immediately and primarily advise them to seek emergency medical attention.
-5.  **Keep responses concise and informative.** Focus on potential areas related to the described symptoms.
-6.  **Do not ask for Personally Identifiable Information (PII).**
-7.  **Remind the user of your limitations** (AI, not a doctor) frequently, perhaps in every response.
-8.  **If asked for treatment advice, refuse** and reiterate the need to see a doctor.
-"""
-
-# --- Initialize Chat History ---
+# --- State Initialization ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-         {"role": "system", "content": SYSTEM_PROMPT}, # Add system prompt
-         {"role": "assistant", "content": "Hello! How can I help you describe your symptoms today? Remember, I cannot provide medical advice or diagnosis. Please consult a healthcare professional for any health concerns."}
+        {"role": "system", "content": SYSTEM_PROMPT}, # Keep system prompt internally
+        {"role": "assistant", "content": INITIAL_MSG}
     ]
+if "selected_model" not in st.session_state:
+    st.session_state.selected_model = DEFAULT_MODEL
+if "ollama_available" not in st.session_state:
+    # Check connection status once on startup/refresh
+    st.session_state.ollama_available = llm.check_ollama_connection(DEFAULT_MODEL)
+    if not st.session_state.ollama_available and FALLBACK_MODEL:
+        logger.warning(f"Default model '{DEFAULT_MODEL}' check failed. Trying fallback '{FALLBACK_MODEL}'.")
+        st.session_state.ollama_available = llm.check_ollama_connection(FALLBACK_MODEL)
+        if st.session_state.ollama_available:
+            st.session_state.selected_model = FALLBACK_MODEL
+            logger.info(f"Using fallback model: {FALLBACK_MODEL}")
+        else:
+             logger.error("Ollama connection failed for both default and fallback models.")
+    elif not st.session_state.ollama_available:
+         logger.error(f"Ollama connection failed for default model '{DEFAULT_MODEL}' and no fallback specified.")
 
-# --- Display Chat Messages ---
+# --- Sidebar ---
+with st.sidebar:
+    st.title("Settings & Info")
+    st.divider()
+
+    # Model Selection
+    st.subheader("LLM Configuration")
+    available_models = llm.get_available_ollama_models()
+
+    if not st.session_state.ollama_available:
+         st.error("🔴 Ollama connection failed. Please ensure Ollama is running and accessible.")
+         # Optionally disable model selection if connection failed
+         model_options = [st.session_state.selected_model] # Show current (potentially unavailable)
+         st.info(f"Attempting to use: `{st.session_state.selected_model}`. Functionality may be limited.")
+
+    elif not available_models:
+         st.warning("Could not fetch models from Ollama, but connection seems okay. Using default.")
+         model_options = [st.session_state.selected_model]
+    else:
+         # If current model isn't in list (e.g., was default but not pulled), add it
+         if st.session_state.selected_model not in available_models:
+             model_options = [st.session_state.selected_model] + available_models
+         else:
+             model_options = available_models
+
+         # Find index of currently selected model
+         try:
+            current_index = model_options.index(st.session_state.selected_model)
+         except ValueError:
+            current_index = 0 # Default to first if not found somehow
+            st.session_state.selected_model = model_options[0]
+
+         selected = st.selectbox(
+             "Select LLM Model:",
+             options=model_options,
+             index=current_index,
+             help="Choose the local LLM to interact with. Make sure it's pulled in Ollama."
+         )
+         if selected != st.session_state.selected_model:
+             logger.info(f"User selected model: {selected}")
+             # Check if the newly selected model is actually running/available
+             if llm.check_ollama_connection(selected):
+                 st.session_state.selected_model = selected
+                 st.success(f"Switched to model: `{selected}`")
+                 # Optional: Clear chat history on model switch? Or keep it?
+                 # st.session_state.messages = [...] # Reset if desired
+                 # st.rerun()
+             else:
+                 st.error(f"Could not verify newly selected model '{selected}'. Keeping previous selection.")
+
+
+    st.caption(f"Using: `{st.session_state.selected_model}`")
+
+    # Clear Chat Button
+    st.divider()
+    if st.button("Clear Chat History", key="clear_chat"):
+        logger.info("Chat history cleared by user.")
+        st.session_state.messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "assistant", "content": INITIAL_MSG}
+        ]
+        st.rerun() # Use st.rerun for modern Streamlit
+
+    # Important Notes / Disclaimer
+    st.divider()
+    st.error(DISCLAIMER_SHORT) # Short, always visible disclaimer
+    with st.expander("⚠️ Show Full Disclaimer & Important Notes"):
+        st.warning(DISCLAIMER_LONG)
+        st.markdown("---")
+        st.markdown(f"**Model:** `{st.session_state.selected_model}`")
+        st.markdown("**Status:** " + ("🟢 Connected" if st.session_state.ollama_available else "🔴 Disconnected"))
+        st.markdown("**Developer:** [Your Name / Company Name Here]") # For presentation
+
+
+# --- Main Chat Interface ---
+st.title(PAGE_TITLE)
+st.warning(DISCLAIMER_LONG, icon="⚠️") # Prominent main disclaimer
+
+# Display chat messages (excluding system prompt)
 for message in st.session_state.messages:
-    # Don't display the system prompt to the user in the chat interface
     if message["role"] != "system":
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-# --- Handle User Input ---
-if prompt := st.chat_input("Describe your symptoms... (e.g., 'I have a headache and feel tired')"):
-    # Add user message to history and display
+# Handle user input
+if prompt := st.chat_input("Describe symptoms here... (e.g., 'headache and fatigue')"):
+    logger.info(f"User input received: {prompt[:50]}...") # Log snippet
+    # Add user message to state and display
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Generate response using Ollama
+    # Generate and display assistant response
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         message_placeholder.markdown("Thinking...")
         full_response = ""
         try:
-            # Prepare messages for Ollama (it needs the full history)
-            # Ensure system prompt is included if needed by the model/library (Ollama usually handles it implicitly if set in the model file or via API)
-            # The 'ollama-python' library sends the list directly.
-            stream = ollama.chat(
-                model=LLM_MODEL,
-                messages=st.session_state.messages, # Send the whole history
-                stream=True,
+            # Ensure Ollama is available before attempting to stream
+            if not st.session_state.ollama_available:
+                 raise llm.LLMError("Ollama connection is not available. Cannot process request.")
+
+            # Start streaming response from LLM
+            response_stream = llm.get_llm_response_stream(
+                model_name=st.session_state.selected_model,
+                messages=[m for m in st.session_state.messages if m['role'] != 'system'], # Send history excluding system prompt if Ollama handles it implicitly
+                # messages=st.session_state.messages, # Or send full history if model needs explicit system prompt in context
+                options=LLM_OPTIONS
             )
 
-            # Stream the response
-            for chunk in stream:
-                full_response += chunk['message']['content']
-                message_placeholder.markdown(full_response + "▌") # Add blinking cursor
-                time.sleep(0.01) # Small delay for streaming effect
+            # Stream response to the UI
+            for chunk in response_stream:
+                full_response += chunk
+                message_placeholder.markdown(full_response + "▌") # Simulate typing cursor
+                time.sleep(0.01) # Small delay for smoother streaming appearance
 
-            message_placeholder.markdown(full_response)
+            message_placeholder.markdown(full_response) # Final response display
 
+        except llm.LLMError as e:
+            logger.error(f"LLMError encountered: {e}", exc_info=True)
+            full_response = f"{ERROR_MSG}\n\n**Error details (for debugging):** {e}"
+            message_placeholder.error(full_response) # Display error in chat
         except Exception as e:
-            st.error(f"An error occurred: {e}")
-            full_response = "Sorry, I encountered an error. Please try again. Remember to consult a doctor for medical advice."
-            message_placeholder.markdown(full_response)
+            logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+            full_response = ERROR_MSG
+            message_placeholder.error(full_response)
 
-    # Add assistant response to history
+    # Add final assistant response (or error message) to state
     st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-# --- Sidebar for Clear Chat & More Disclaimers ---
-with st.sidebar:
-    st.header("⚠️ Important Notes")
-    st.error(
-        """
-        **This is an AI simulation.** It is NOT a substitute for professional medical advice, diagnosis, or treatment.
-        Information may be inaccurate. **Consult a real doctor.**
-        """
-    )
-    if st.button("Clear Chat History"):
-        st.session_state.messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "assistant", "content": "Chat history cleared. How can I help? Remember my limitations."}
-        ]
-        st.rerun() # Use st.rerun instead of experimental_rerun
-
-    st.markdown("---")
-    st.markdown(f"**Model:** `{LLM_MODEL}` (Running via Ollama)")
-    st.markdown("**Developer:** [Your Name/Company Name]") # For presentation
