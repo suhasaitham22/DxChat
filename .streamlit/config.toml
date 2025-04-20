@@ -1,0 +1,19 @@
+[theme]
+base="light"
+primaryColor="#0068C9"  # Example: A more professional blue
+backgroundColor="#FFFFFF"
+secondaryBackgroundColor="#F0F2F6"
+textColor="#0C0C0F"
+font="sans serif"
+
+[logger]
+level = "info" # Streamlit's own logger, distinct from app logging
+
+[server]
+# address = "0.0.0.0" # Uncomment to allow access from network (use with caution)
+port = 8501
+enableCORS = false # Keep false unless needed for specific embedding scenarios
+enableXsrfProtection = true # Keep true for security
+
+[browser]
+gatherUsageStats = false # Optional: disable Streamlit usage stats gathering
